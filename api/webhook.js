@@ -1,260 +1,142 @@
 const axios = require('axios');
 
 module.exports = async (req, res) => {
-  // Set CORS headers first
+  // Set CORS headers
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   
-  // Handle OPTIONS request for CORS
+  // Handle OPTIONS request
   if (req.method === 'OPTIONS') {
     return res.status(200).end();
   }
   
-  // Only accept POST requests
   if (req.method !== 'POST') {
     return res.status(405).end();
   }
   
   try {
-    // Log incoming request
-    console.log('=== NEW FORM SUBMISSION ===');
+    console.log('=== WEBHOOK RECEIVED ===');
     console.log('Time:', new Date().toISOString());
     
-    // Extract form data
+    // Get form data from Webflow
     const formData = req.body.data || req.body || {};
     
-    // Log the EXACT form structure
-    console.log('FORM TYPE DETECTION:');
-    console.log('Form Fields Present:', Object.keys(formData));
-    console.log('Full Form Data:', JSON.stringify(formData, null, 2));
+    // Log EVERYTHING for debugging
+    console.log('RAW FORM DATA:');
+    console.log(JSON.stringify(formData, null, 2));
+    console.log('FIELD NAMES:', Object.keys(formData));
     
-    // Initialize HubSpot properties
+    // Initialize properties for HubSpot
     const properties = {};
-    const customFields = {};
+    const notesData = [];
     
-    // SMART FIELD MAPPING - Check every field and map intelligently
+    // Process each field from the form
     Object.keys(formData).forEach(fieldName => {
-      const fieldValue = formData[fieldName];
-      const fieldNameLower = fieldName.toLowerCase();
+      const value = formData[fieldName];
+      if (!value || value === '') return;
       
-      // Skip empty values
-      if (!fieldValue || fieldValue === '') return;
+      const fieldLower = fieldName.toLowerCase();
       
-      // EMAIL DETECTION
-      if (fieldNameLower.includes('email') || fieldNameLower.includes('e-mail')) {
-        properties.email = fieldValue.toLowerCase().trim();
+      // MAP STANDARD FIELDS
+      if (fieldLower.includes('email')) {
+        properties.email = value.toLowerCase().trim();
       }
-      // PHONE DETECTION
-      else if (fieldNameLower.includes('phone') || fieldNameLower.includes('mobile') || 
-               fieldNameLower.includes('tel') || fieldNameLower.includes('contact')) {
-        let phone = fieldValue.toString().replace(/[\s\-\(\)\.]/g, '');
-        
-        // UAE phone formatting
+      else if (fieldLower.includes('phone') || fieldLower.includes('mobile')) {
+        let phone = value.toString().replace(/[\s\-\(\)\.]/g, '');
         if (!phone.startsWith('+')) {
-          if (phone.startsWith('00971')) {
-            phone = '+' + phone.substring(2);
-          } else if (phone.startsWith('971')) {
-            phone = '+' + phone;
-          } else if (phone.startsWith('0') && phone.length === 10) {
-            phone = '+971' + phone.substring(1);
-          } else if (phone.length === 9 && !phone.startsWith('0')) {
-            phone = '+971' + phone;
-          }
+          if (phone.startsWith('00971')) phone = '+' + phone.substring(2);
+          else if (phone.startsWith('971')) phone = '+' + phone;
+          else if (phone.startsWith('0')) phone = '+971' + phone.substring(1);
+          else if (phone.length === 9) phone = '+971' + phone;
         }
         properties.phone = phone;
       }
-      // FIRST NAME DETECTION
-      else if (fieldNameLower === 'first name' || fieldNameLower === 'firstname' || 
-               fieldNameLower === 'first_name' || fieldNameLower === 'fname' ||
-               fieldNameLower === 'given name' || fieldNameLower === 'prenom') {
-        properties.firstname = fieldValue.trim();
+      else if (fieldLower === 'first name' || fieldLower === 'firstname') {
+        properties.firstname = value.trim();
       }
-      // LAST NAME DETECTION
-      else if (fieldNameLower === 'last name' || fieldNameLower === 'lastname' || 
-               fieldNameLower === 'last_name' || fieldNameLower === 'lname' ||
-               fieldNameLower === 'surname' || fieldNameLower === 'family name') {
-        properties.lastname = fieldValue.trim();
+      else if (fieldLower === 'last name' || fieldLower === 'lastname') {
+        properties.lastname = value.trim();
       }
-      // FULL NAME DETECTION
-      else if (fieldNameLower === 'name' || fieldNameLower === 'full name' || 
-               fieldNameLower === 'fullname' || fieldNameLower === 'your name') {
-        // Split full name
-        const nameParts = fieldValue.trim().split(' ');
-        if (!properties.firstname) {
-          properties.firstname = nameParts[0];
-        }
-        if (!properties.lastname && nameParts.length > 1) {
-          properties.lastname = nameParts.slice(1).join(' ');
-        }
+      else if (fieldLower === 'name' && !properties.firstname) {
+        const parts = value.trim().split(' ');
+        properties.firstname = parts[0];
+        properties.lastname = parts.slice(1).join(' ') || '';
       }
-      // COMPANY DETECTION
-      else if (fieldNameLower.includes('company') || fieldNameLower.includes('organization') || 
-               fieldNameLower.includes('business')) {
-        properties.company = fieldValue.trim();
+      else if (fieldLower.includes('company')) {
+        properties.company = value.trim();
       }
-      // LOCATION/CITY DETECTION
-      else if (fieldNameLower.includes('location') || fieldNameLower.includes('city') || 
-               fieldNameLower.includes('area') || fieldNameLower.includes('region') ||
-               fieldNameLower.includes('dubai') || fieldNameLower.includes('emirate')) {
-        properties.city = fieldValue.trim();
-        customFields['Location'] = fieldValue.trim();
+      else if (fieldLower.includes('location') || fieldLower.includes('city')) {
+        properties.city = value.trim();
+        notesData.push(`Location: ${value.trim()}`);
       }
-      // WEBSITE DETECTION
-      else if (fieldNameLower.includes('website') || fieldNameLower.includes('url') || 
-               fieldNameLower.includes('site')) {
-        properties.website = fieldValue.trim();
+      else if (fieldLower.includes('website')) {
+        properties.website = value.trim();
       }
-      // JOB TITLE DETECTION
-      else if (fieldNameLower.includes('job') || fieldNameLower.includes('title') || 
-               fieldNameLower.includes('position') || fieldNameLower.includes('role')) {
-        properties.jobtitle = fieldValue.trim();
+      
+      // ADD ALL CUSTOM FIELDS TO NOTES
+      if (fieldLower.includes('gender')) {
+        notesData.push(`Gender: ${value}`);
       }
-      // STATE/REGION DETECTION
-      else if (fieldNameLower.includes('state') || fieldNameLower.includes('province')) {
-        properties.state = fieldValue.trim();
+      if (fieldLower.includes('goal')) {
+        notesData.push(`Goal: ${value}`);
       }
-      // ZIP/POSTAL CODE DETECTION
-      else if (fieldNameLower.includes('zip') || fieldNameLower.includes('postal')) {
-        properties.zip = fieldValue.trim();
+      if (fieldLower.includes('age')) {
+        notesData.push(`Age: ${value}`);
       }
-      // ADDRESS DETECTION
-      else if (fieldNameLower.includes('address') || fieldNameLower.includes('street')) {
-        properties.address = fieldValue.trim();
+      if (fieldLower.includes('message') || fieldLower.includes('comment')) {
+        notesData.push(`Message: ${value}`);
       }
-      // COUNTRY DETECTION
-      else if (fieldNameLower.includes('country')) {
-        properties.country = fieldValue.trim();
+      if (fieldLower.includes('page')) {
+        notesData.push(`Page: ${value}`);
       }
-      // MESSAGE/NOTES DETECTION
-      else if (fieldNameLower.includes('message') || fieldNameLower.includes('comment') || 
-               fieldNameLower.includes('note') || fieldNameLower.includes('details') ||
-               fieldNameLower.includes('description')) {
-        customFields['Message'] = fieldValue.trim();
+      if (fieldLower.includes('service')) {
+        notesData.push(`Service: ${value}`);
       }
-      // GENDER DETECTION
-      else if (fieldNameLower.includes('gender') || fieldNameLower.includes('sex')) {
-        customFields['Gender'] = fieldValue.trim();
+      if (fieldLower.includes('time') || fieldLower.includes('schedule')) {
+        notesData.push(`Preferred Time: ${value}`);
       }
-      // GOAL/FITNESS GOAL DETECTION
-      else if (fieldNameLower.includes('goal') || fieldNameLower.includes('objective') || 
-               fieldNameLower.includes('purpose') || fieldNameLower.includes('interest')) {
-        let goalText = fieldValue;
-        const goalLower = fieldValue.toString().toLowerCase().replace(/[-_]/g, ' ');
-        
-        // Standardize common fitness goals
-        if (goalLower.includes('lose') && goalLower.includes('weight')) {
-          goalText = 'Lose weight';
-        } else if (goalLower.includes('improve') && goalLower.includes('health')) {
-          goalText = 'Improve health';
-        } else if (goalLower.includes('build') && goalLower.includes('muscle')) {
-          goalText = 'Build muscle';
-        } else if (goalLower.includes('not') && goalLower.includes('sure')) {
-          goalText = 'Not sure';
-        } else if (goalLower.includes('fitness')) {
-          goalText = 'General fitness';
-        } else if (goalLower.includes('strength')) {
-          goalText = 'Build strength';
-        } else if (goalLower.includes('endurance')) {
-          goalText = 'Improve endurance';
-        }
-        
-        customFields['Goal'] = goalText;
+      if (fieldLower.includes('source') || fieldLower.includes('referral')) {
+        notesData.push(`Source: ${value}`);
       }
-      // AGE DETECTION
-      else if (fieldNameLower.includes('age') || fieldNameLower === 'dob' || 
-               fieldNameLower.includes('birth')) {
-        customFields['Age'] = fieldValue.trim();
-      }
-      // BUDGET DETECTION
-      else if (fieldNameLower.includes('budget') || fieldNameLower.includes('price')) {
-        customFields['Budget'] = fieldValue.trim();
-      }
-      // PREFERRED TIME DETECTION
-      else if (fieldNameLower.includes('time') || fieldNameLower.includes('schedule') || 
-               fieldNameLower.includes('availability')) {
-        customFields['Preferred Time'] = fieldValue.trim();
-      }
-      // SOURCE/REFERRAL DETECTION
-      else if (fieldNameLower.includes('source') || fieldNameLower.includes('referral') || 
-               fieldNameLower.includes('how did you hear')) {
-        customFields['Source'] = fieldValue.trim();
-      }
-      // PAGE SUBMITTED DETECTION
-      else if (fieldNameLower.includes('page') || fieldNameLower.includes('submitted')) {
-        customFields['Page'] = fieldValue.trim();
-      }
-      // SERVICE TYPE DETECTION
-      else if (fieldNameLower.includes('service') || fieldNameLower.includes('package') || 
-               fieldNameLower.includes('plan')) {
-        customFields['Service Interest'] = fieldValue.trim();
-      }
-      // EXPERIENCE LEVEL DETECTION
-      else if (fieldNameLower.includes('experience') || fieldNameLower.includes('level')) {
-        customFields['Experience Level'] = fieldValue.trim();
-      }
-      // ALL OTHER FIELDS - Store as custom fields
-      else {
-        customFields[fieldName] = fieldValue;
+      
+      // Catch any field not already mapped
+      const standardFields = ['email', 'phone', 'first', 'last', 'name', 'company', 'location', 'city', 'website'];
+      const isStandard = standardFields.some(f => fieldLower.includes(f));
+      
+      if (!isStandard) {
+        notesData.push(`${fieldName}: ${value}`);
       }
     });
     
-    // BUILD COMPREHENSIVE NOTES FIELD from all custom fields
-    const notesArray = [];
-    
-    // Add all custom fields to notes
-    Object.keys(customFields).forEach(key => {
-      if (customFields[key]) {
-        notesArray.push(`${key}: ${customFields[key]}`);
-      }
-    });
-    
-    // Add form metadata
-    notesArray.push(`Form submitted: ${new Date().toISOString()}`);
-    notesArray.push(`Form fields: ${Object.keys(formData).join(', ')}`);
-    
-    // Combine all notes
-    if (notesArray.length > 0) {
-      properties.notes = notesArray.join(' | ');
-    }
-    
-    // Set defaults if missing
+    // Set defaults
     if (!properties.company) {
       properties.company = 'PTD FITNESS';
     }
     
-    // Handle missing names
-    if (!properties.firstname && !properties.lastname) {
-      // Try to extract from email
-      if (properties.email) {
-        const emailName = properties.email.split('@')[0];
-        const nameParts = emailName.replace(/[0-9]/g, '').split(/[._-]/);
-        if (nameParts.length > 0) {
-          properties.firstname = nameParts[0];
-          if (nameParts.length > 1) {
-            properties.lastname = nameParts[1];
-          }
-        }
-      }
+    // COMBINE ALL NOTES - THIS IS CRITICAL!
+    if (notesData.length > 0) {
+      properties.notes = notesData.join(' | ');
+      console.log('NOTES FIELD CONTENT:', properties.notes);
+    } else {
+      // Even if no custom data, add timestamp
+      properties.notes = `Form submitted: ${new Date().toISOString()}`;
     }
     
-    // Log what we're sending
-    console.log('MAPPED TO HUBSPOT:');
-    console.log('Standard Properties:', properties);
-    console.log('Custom Fields (in notes):', customFields);
+    // Log final properties
+    console.log('FINAL HUBSPOT PROPERTIES:');
+    console.log(JSON.stringify(properties, null, 2));
     
-    // Require email as minimum
+    // Validate email
     if (!properties.email) {
-      console.error('ERROR: No email found in submission');
-      console.log('Available fields were:', Object.keys(formData));
-      return res.status(200).json({ error: 'No email provided' });
+      console.error('NO EMAIL FOUND');
+      return res.status(200).json({ error: 'No email' });
     }
     
-    // SMART DUPLICATE HANDLING
+    // HUBSPOT API CALL
     let contactId = null;
-    let existingNotes = '';
     
-    // Search by email first
+    // First try to find existing contact
     try {
       const searchResponse = await axios({
         method: 'POST',
@@ -270,70 +152,29 @@ module.exports = async (req, res) => {
               operator: 'EQ',
               value: properties.email
             }]
-          }],
-          properties: ['email', 'notes']
+          }]
         }
       });
       
       if (searchResponse.data.results && searchResponse.data.results.length > 0) {
         contactId = searchResponse.data.results[0].id;
-        existingNotes = searchResponse.data.results[0].properties.notes || '';
-        console.log('Found existing contact by email:', contactId);
-      }
-    } catch (err) {
-      console.log('No existing contact found by email');
-    }
-    
-    // If no email match, try phone
-    if (!contactId && properties.phone) {
-      try {
-        const phoneSearch = await axios({
-          method: 'POST',
-          url: 'https://api.hubapi.com/crm/v3/objects/contacts/search',
-          headers: {
-            'Authorization': `Bearer ${process.env.HUBSPOT_API_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          data: {
-            filterGroups: [{
-              filters: [{
-                propertyName: 'phone',
-                operator: 'EQ',
-                value: properties.phone
-              }]
-            }],
-            properties: ['email', 'notes']
-          }
-        });
+        const existingNotes = searchResponse.data.results[0].properties.notes || '';
         
-        if (phoneSearch.data.results && phoneSearch.data.results.length > 0) {
-          contactId = phoneSearch.data.results[0].id;
-          existingNotes = phoneSearch.data.results[0].properties.notes || '';
-          console.log('Found existing contact by phone:', contactId);
+        // Append to existing notes
+        if (existingNotes && properties.notes) {
+          properties.notes = existingNotes + ' | [NEW SUBMISSION] ' + properties.notes;
         }
-      } catch (err) {
-        console.log('No existing contact found by phone');
+        
+        console.log('FOUND EXISTING CONTACT:', contactId);
       }
+    } catch (searchErr) {
+      console.log('No existing contact');
     }
     
-    // UPDATE OR CREATE
+    // UPDATE or CREATE
     if (contactId) {
-      // Merge notes intelligently
-      if (existingNotes && properties.notes) {
-        // Check if this is a duplicate submission (same form data)
-        const isDuplicate = existingNotes.includes(customFields['Goal']) && 
-                          existingNotes.includes(customFields['Location']);
-        
-        if (!isDuplicate) {
-          properties.notes = existingNotes + ' | [NEW FORM] ' + properties.notes;
-        } else {
-          console.log('Duplicate submission detected, keeping existing notes');
-          delete properties.notes; // Don't update notes if duplicate
-        }
-      }
-      
-      // Update existing contact
-      await axios({
+      // UPDATE existing
+      const updateResponse = await axios({
         method: 'PATCH',
         url: `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}`,
         headers: {
@@ -343,9 +184,10 @@ module.exports = async (req, res) => {
         data: { properties }
       });
       
-      console.log('✅ UPDATED contact:', contactId);
+      console.log('✅ UPDATED CONTACT:', contactId);
+      console.log('Update response:', updateResponse.data);
     } else {
-      // Create new contact
+      // CREATE new
       const createResponse = await axios({
         method: 'POST',
         url: 'https://api.hubapi.com/crm/v3/objects/contacts',
@@ -356,21 +198,18 @@ module.exports = async (req, res) => {
         data: { properties }
       });
       
-      console.log('✅ CREATED new contact:', createResponse.data.id);
+      console.log('✅ CREATED CONTACT:', createResponse.data.id);
+      console.log('Create response:', createResponse.data);
     }
     
-    // Return success for Webflow
+    // Return success
     return res.status(200).json({});
     
   } catch (error) {
-    console.error('=== ERROR ===');
-    console.error('Error:', error.message);
-    
+    console.error('ERROR:', error.message);
     if (error.response) {
       console.error('HubSpot Error:', error.response.data);
     }
-    
-    // Still return 200 to prevent form error
     return res.status(200).json({});
   }
 };
