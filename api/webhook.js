@@ -188,7 +188,7 @@ module.exports = async (req, res) => {
       // CREATE new contact
       const createResponse = await axios({
         method: "POST",
-        url: "https://api.hubapi.com/crm/v3/objects/contacts",
+        url: "https://api.hubspot.com/crm/v3/objects/contacts",
         headers: {
           Authorization: `Bearer ${process.env.HUBSPOT_API_KEY}`,
           "Content-Type": "application/json",
@@ -213,4 +213,3 @@ module.exports = async (req, res) => {
     return res.status(500).json({ success: false, error: "Submission failed. Please try again." });
   }
 };
-
