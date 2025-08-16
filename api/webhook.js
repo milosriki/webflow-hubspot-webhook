@@ -17,163 +17,277 @@ module.exports = async (req, res) => {
   }
   
   try {
-    // Log incoming request for debugging
-    console.log('=== WEBHOOK RECEIVED ===');
+    // Log incoming request
+    console.log('=== NEW FORM SUBMISSION ===');
     console.log('Time:', new Date().toISOString());
-    console.log('Headers:', JSON.stringify(req.headers, null, 2));
-    console.log('Body:', JSON.stringify(req.body, null, 2));
     
-    // Extract form data - Webflow sends it in req.body directly or in req.body.data
+    // Extract form data
     const formData = req.body.data || req.body || {};
     
-    // Log extracted data
-    console.log('Form Data Fields:', Object.keys(formData));
+    // Log the EXACT form structure
+    console.log('FORM TYPE DETECTION:');
+    console.log('Form Fields Present:', Object.keys(formData));
+    console.log('Full Form Data:', JSON.stringify(formData, null, 2));
     
-    // Create HubSpot contact properties
+    // Initialize HubSpot properties
     const properties = {};
+    const customFields = {};
     
-    // Map email (check various possible field names)
-    if (formData.email || formData.Email || formData.EMAIL) {
-      properties.email = (formData.email || formData.Email || formData.EMAIL).toLowerCase().trim();
-    }
-    
-    // Map names - handle both combined and separate fields
-    if (formData['First Name'] || formData.firstname || formData.FirstName) {
-      properties.firstname = formData['First Name'] || formData.firstname || formData.FirstName;
-    }
-    
-    if (formData['Last Name'] || formData.lastname || formData.LastName) {
-      properties.lastname = formData['Last Name'] || formData.lastname || formData.LastName;
-    }
-    
-    // If names come as a single field
-    if (formData.name || formData.Name) {
-      const fullName = (formData.name || formData.Name).trim();
-      const nameParts = fullName.split(' ');
-      if (!properties.firstname) properties.firstname = nameParts[0];
-      if (!properties.lastname && nameParts.length > 1) {
-        properties.lastname = nameParts.slice(1).join(' ');
-      }
-    }
-    
-    // Map company if present
-    if (formData.company || formData.Company) {
-      properties.company = formData.company || formData.Company;
-    }
-    
-    // Handle phone number with UAE formatting
-    if (formData.phone || formData.Phone || formData.mobile) {
-      let phone = (formData.phone || formData.Phone || formData.mobile).toString();
-      // Remove all non-digits
-      phone = phone.replace(/\D/g, '');
+    // SMART FIELD MAPPING - Check every field and map intelligently
+    Object.keys(formData).forEach(fieldName => {
+      const fieldValue = formData[fieldName];
+      const fieldNameLower = fieldName.toLowerCase();
       
-      // Format for UAE
-      if (phone.startsWith('971')) {
-        properties.phone = '+' + phone;
-      } else if (phone.startsWith('00971')) {
-        properties.phone = '+' + phone.substring(2);
-      } else if (phone.startsWith('0')) {
-        properties.phone = '+971' + phone.substring(1);
-      } else if (phone.length === 9) {
-        // Assume it's a UAE mobile without country code
-        properties.phone = '+971' + phone;
-      } else {
-        properties.phone = '+971' + phone;
-      }
-    }
-    
-    // Map location if present
-    if (formData.location || formData.Location) {
-      properties.city = formData.location || formData.Location;
-    }
-    
-    // Map any fitness goal or other custom fields to notes
-    let notes = [];
-    
-    // Handle Gender field
-    if (formData.Gender || formData.gender) {
-      const gender = formData.Gender || formData.gender;
-      notes.push(`Gender: ${gender}`);
-    }
-    
-    // Handle Goal field (including "Goal [Webflow Test]" format)
-    const goalField = formData.goal || formData['Goal [Webflow Test]'] || formData['Fitness Goal'];
-    if (goalField) {
-      let goalText = goalField;
+      // Skip empty values
+      if (!fieldValue || fieldValue === '') return;
       
-      // Convert goal values to readable text if needed
-      switch(goalField.toLowerCase()) {
-        case 'lose-weight':
-        case 'lose weight':
+      // EMAIL DETECTION
+      if (fieldNameLower.includes('email') || fieldNameLower.includes('e-mail')) {
+        properties.email = fieldValue.toLowerCase().trim();
+      }
+      // PHONE DETECTION
+      else if (fieldNameLower.includes('phone') || fieldNameLower.includes('mobile') || 
+               fieldNameLower.includes('tel') || fieldNameLower.includes('contact')) {
+        let phone = fieldValue.toString().replace(/[\s\-\(\)\.]/g, '');
+        
+        // UAE phone formatting
+        if (!phone.startsWith('+')) {
+          if (phone.startsWith('00971')) {
+            phone = '+' + phone.substring(2);
+          } else if (phone.startsWith('971')) {
+            phone = '+' + phone;
+          } else if (phone.startsWith('0') && phone.length === 10) {
+            phone = '+971' + phone.substring(1);
+          } else if (phone.length === 9 && !phone.startsWith('0')) {
+            phone = '+971' + phone;
+          }
+        }
+        properties.phone = phone;
+      }
+      // FIRST NAME DETECTION
+      else if (fieldNameLower === 'first name' || fieldNameLower === 'firstname' || 
+               fieldNameLower === 'first_name' || fieldNameLower === 'fname' ||
+               fieldNameLower === 'given name' || fieldNameLower === 'prenom') {
+        properties.firstname = fieldValue.trim();
+      }
+      // LAST NAME DETECTION
+      else if (fieldNameLower === 'last name' || fieldNameLower === 'lastname' || 
+               fieldNameLower === 'last_name' || fieldNameLower === 'lname' ||
+               fieldNameLower === 'surname' || fieldNameLower === 'family name') {
+        properties.lastname = fieldValue.trim();
+      }
+      // FULL NAME DETECTION
+      else if (fieldNameLower === 'name' || fieldNameLower === 'full name' || 
+               fieldNameLower === 'fullname' || fieldNameLower === 'your name') {
+        // Split full name
+        const nameParts = fieldValue.trim().split(' ');
+        if (!properties.firstname) {
+          properties.firstname = nameParts[0];
+        }
+        if (!properties.lastname && nameParts.length > 1) {
+          properties.lastname = nameParts.slice(1).join(' ');
+        }
+      }
+      // COMPANY DETECTION
+      else if (fieldNameLower.includes('company') || fieldNameLower.includes('organization') || 
+               fieldNameLower.includes('business')) {
+        properties.company = fieldValue.trim();
+      }
+      // LOCATION/CITY DETECTION
+      else if (fieldNameLower.includes('location') || fieldNameLower.includes('city') || 
+               fieldNameLower.includes('area') || fieldNameLower.includes('region') ||
+               fieldNameLower.includes('dubai') || fieldNameLower.includes('emirate')) {
+        properties.city = fieldValue.trim();
+        customFields['Location'] = fieldValue.trim();
+      }
+      // WEBSITE DETECTION
+      else if (fieldNameLower.includes('website') || fieldNameLower.includes('url') || 
+               fieldNameLower.includes('site')) {
+        properties.website = fieldValue.trim();
+      }
+      // JOB TITLE DETECTION
+      else if (fieldNameLower.includes('job') || fieldNameLower.includes('title') || 
+               fieldNameLower.includes('position') || fieldNameLower.includes('role')) {
+        properties.jobtitle = fieldValue.trim();
+      }
+      // STATE/REGION DETECTION
+      else if (fieldNameLower.includes('state') || fieldNameLower.includes('province')) {
+        properties.state = fieldValue.trim();
+      }
+      // ZIP/POSTAL CODE DETECTION
+      else if (fieldNameLower.includes('zip') || fieldNameLower.includes('postal')) {
+        properties.zip = fieldValue.trim();
+      }
+      // ADDRESS DETECTION
+      else if (fieldNameLower.includes('address') || fieldNameLower.includes('street')) {
+        properties.address = fieldValue.trim();
+      }
+      // COUNTRY DETECTION
+      else if (fieldNameLower.includes('country')) {
+        properties.country = fieldValue.trim();
+      }
+      // MESSAGE/NOTES DETECTION
+      else if (fieldNameLower.includes('message') || fieldNameLower.includes('comment') || 
+               fieldNameLower.includes('note') || fieldNameLower.includes('details') ||
+               fieldNameLower.includes('description')) {
+        customFields['Message'] = fieldValue.trim();
+      }
+      // GENDER DETECTION
+      else if (fieldNameLower.includes('gender') || fieldNameLower.includes('sex')) {
+        customFields['Gender'] = fieldValue.trim();
+      }
+      // GOAL/FITNESS GOAL DETECTION
+      else if (fieldNameLower.includes('goal') || fieldNameLower.includes('objective') || 
+               fieldNameLower.includes('purpose') || fieldNameLower.includes('interest')) {
+        let goalText = fieldValue;
+        const goalLower = fieldValue.toString().toLowerCase().replace(/[-_]/g, ' ');
+        
+        // Standardize common fitness goals
+        if (goalLower.includes('lose') && goalLower.includes('weight')) {
           goalText = 'Lose weight';
-          break;
-        case 'improve-health':
-        case 'improve health':
+        } else if (goalLower.includes('improve') && goalLower.includes('health')) {
           goalText = 'Improve health';
-          break;
-        case 'build-muscle':
-        case 'build muscle':
+        } else if (goalLower.includes('build') && goalLower.includes('muscle')) {
           goalText = 'Build muscle';
-          break;
-        case 'not-sure':
-        case 'not sure':
+        } else if (goalLower.includes('not') && goalLower.includes('sure')) {
           goalText = 'Not sure';
-          break;
-        default:
-          goalText = goalField; // Use as-is if not a predefined value
+        } else if (goalLower.includes('fitness')) {
+          goalText = 'General fitness';
+        } else if (goalLower.includes('strength')) {
+          goalText = 'Build strength';
+        } else if (goalLower.includes('endurance')) {
+          goalText = 'Improve endurance';
+        }
+        
+        customFields['Goal'] = goalText;
       }
-      notes.push(`Fitness Goal: ${goalText}`);
-    }
-    
-    // Add page submitted information if available
-    if (formData['Page submitted on']) {
-      notes.push(`Submitted from: ${formData['Page submitted on']}`);
-    }
-    
-    // Add location if present
-    if (formData.location || formData.Location) {
-      const location = formData.location || formData.Location;
-      properties.city = location;
-      notes.push(`Location: ${location}`);
-    }
-    
-    // Combine notes
-    if (notes.length > 0) {
-      properties.notes = notes.join(' | ');
-    }
-    
-    // Log what we're sending to HubSpot
-    console.log('Sending to HubSpot:', JSON.stringify(properties, null, 2));
-    
-    // Check if we have minimum required data
-    if (!properties.email) {
-      console.error('ERROR: No email found in submission');
-      // Still return 200 to prevent Webflow error
-      return res.status(200).end();
-    }
-    
-    // Send to HubSpot
-    const hubspotResponse = await axios({
-      method: 'POST',
-      url: 'https://api.hubapi.com/crm/v3/objects/contacts',
-      headers: {
-        'Authorization': `Bearer ${process.env.HUBSPOT_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      data: { properties },
-      validateStatus: function (status) {
-        // Don't throw error for duplicate contacts (409)
-        return status < 500;
+      // AGE DETECTION
+      else if (fieldNameLower.includes('age') || fieldNameLower === 'dob' || 
+               fieldNameLower.includes('birth')) {
+        customFields['Age'] = fieldValue.trim();
+      }
+      // BUDGET DETECTION
+      else if (fieldNameLower.includes('budget') || fieldNameLower.includes('price')) {
+        customFields['Budget'] = fieldValue.trim();
+      }
+      // PREFERRED TIME DETECTION
+      else if (fieldNameLower.includes('time') || fieldNameLower.includes('schedule') || 
+               fieldNameLower.includes('availability')) {
+        customFields['Preferred Time'] = fieldValue.trim();
+      }
+      // SOURCE/REFERRAL DETECTION
+      else if (fieldNameLower.includes('source') || fieldNameLower.includes('referral') || 
+               fieldNameLower.includes('how did you hear')) {
+        customFields['Source'] = fieldValue.trim();
+      }
+      // PAGE SUBMITTED DETECTION
+      else if (fieldNameLower.includes('page') || fieldNameLower.includes('submitted')) {
+        customFields['Page'] = fieldValue.trim();
+      }
+      // SERVICE TYPE DETECTION
+      else if (fieldNameLower.includes('service') || fieldNameLower.includes('package') || 
+               fieldNameLower.includes('plan')) {
+        customFields['Service Interest'] = fieldValue.trim();
+      }
+      // EXPERIENCE LEVEL DETECTION
+      else if (fieldNameLower.includes('experience') || fieldNameLower.includes('level')) {
+        customFields['Experience Level'] = fieldValue.trim();
+      }
+      // ALL OTHER FIELDS - Store as custom fields
+      else {
+        customFields[fieldName] = fieldValue;
       }
     });
     
-    if (hubspotResponse.status === 409) {
-      console.log('Contact already exists, updating instead...');
+    // BUILD COMPREHENSIVE NOTES FIELD from all custom fields
+    const notesArray = [];
+    
+    // Add all custom fields to notes
+    Object.keys(customFields).forEach(key => {
+      if (customFields[key]) {
+        notesArray.push(`${key}: ${customFields[key]}`);
+      }
+    });
+    
+    // Add form metadata
+    notesArray.push(`Form submitted: ${new Date().toISOString()}`);
+    notesArray.push(`Form fields: ${Object.keys(formData).join(', ')}`);
+    
+    // Combine all notes
+    if (notesArray.length > 0) {
+      properties.notes = notesArray.join(' | ');
+    }
+    
+    // Set defaults if missing
+    if (!properties.company) {
+      properties.company = 'PTD FITNESS';
+    }
+    
+    // Handle missing names
+    if (!properties.firstname && !properties.lastname) {
+      // Try to extract from email
+      if (properties.email) {
+        const emailName = properties.email.split('@')[0];
+        const nameParts = emailName.replace(/[0-9]/g, '').split(/[._-]/);
+        if (nameParts.length > 0) {
+          properties.firstname = nameParts[0];
+          if (nameParts.length > 1) {
+            properties.lastname = nameParts[1];
+          }
+        }
+      }
+    }
+    
+    // Log what we're sending
+    console.log('MAPPED TO HUBSPOT:');
+    console.log('Standard Properties:', properties);
+    console.log('Custom Fields (in notes):', customFields);
+    
+    // Require email as minimum
+    if (!properties.email) {
+      console.error('ERROR: No email found in submission');
+      console.log('Available fields were:', Object.keys(formData));
+      return res.status(200).json({ error: 'No email provided' });
+    }
+    
+    // SMART DUPLICATE HANDLING
+    let contactId = null;
+    let existingNotes = '';
+    
+    // Search by email first
+    try {
+      const searchResponse = await axios({
+        method: 'POST',
+        url: 'https://api.hubapi.com/crm/v3/objects/contacts/search',
+        headers: {
+          'Authorization': `Bearer ${process.env.HUBSPOT_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        data: {
+          filterGroups: [{
+            filters: [{
+              propertyName: 'email',
+              operator: 'EQ',
+              value: properties.email
+            }]
+          }],
+          properties: ['email', 'notes']
+        }
+      });
       
-      // Try to update existing contact
+      if (searchResponse.data.results && searchResponse.data.results.length > 0) {
+        contactId = searchResponse.data.results[0].id;
+        existingNotes = searchResponse.data.results[0].properties.notes || '';
+        console.log('Found existing contact by email:', contactId);
+      }
+    } catch (err) {
+      console.log('No existing contact found by email');
+    }
+    
+    // If no email match, try phone
+    if (!contactId && properties.phone) {
       try {
-        // First search for the contact
-        const searchResponse = await axios({
+        const phoneSearch = await axios({
           method: 'POST',
           url: 'https://api.hubapi.com/crm/v3/objects/contacts/search',
           headers: {
@@ -183,63 +297,80 @@ module.exports = async (req, res) => {
           data: {
             filterGroups: [{
               filters: [{
-                propertyName: 'email',
+                propertyName: 'phone',
                 operator: 'EQ',
-                value: properties.email
+                value: properties.phone
               }]
-            }]
+            }],
+            properties: ['email', 'notes']
           }
         });
         
-        if (searchResponse.data.results && searchResponse.data.results.length > 0) {
-          const contactId = searchResponse.data.results[0].id;
-          
-          // Update the existing contact
-          await axios({
-            method: 'PATCH',
-            url: `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}`,
-            headers: {
-              'Authorization': `Bearer ${process.env.HUBSPOT_API_KEY}`,
-              'Content-Type': 'application/json'
-            },
-            data: { properties }
-          });
-          
-          console.log('Updated existing contact:', contactId);
+        if (phoneSearch.data.results && phoneSearch.data.results.length > 0) {
+          contactId = phoneSearch.data.results[0].id;
+          existingNotes = phoneSearch.data.results[0].properties.notes || '';
+          console.log('Found existing contact by phone:', contactId);
         }
-      } catch (updateError) {
-        console.error('Error updating contact:', updateError.message);
+      } catch (err) {
+        console.log('No existing contact found by phone');
       }
-    } else if (hubspotResponse.status === 201) {
-      console.log('SUCCESS: Contact created with ID:', hubspotResponse.data.id);
-    } else {
-      console.log('HubSpot Response Status:', hubspotResponse.status);
-      console.log('HubSpot Response:', hubspotResponse.data);
     }
     
-    // CRITICAL: Return empty 200 response for Webflow
-    // This prevents the "Form Submission Failed" message
-    return res.status(200).end();
+    // UPDATE OR CREATE
+    if (contactId) {
+      // Merge notes intelligently
+      if (existingNotes && properties.notes) {
+        // Check if this is a duplicate submission (same form data)
+        const isDuplicate = existingNotes.includes(customFields['Goal']) && 
+                          existingNotes.includes(customFields['Location']);
+        
+        if (!isDuplicate) {
+          properties.notes = existingNotes + ' | [NEW FORM] ' + properties.notes;
+        } else {
+          console.log('Duplicate submission detected, keeping existing notes');
+          delete properties.notes; // Don't update notes if duplicate
+        }
+      }
+      
+      // Update existing contact
+      await axios({
+        method: 'PATCH',
+        url: `https://api.hubapi.com/crm/v3/objects/contacts/${contactId}`,
+        headers: {
+          'Authorization': `Bearer ${process.env.HUBSPOT_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        data: { properties }
+      });
+      
+      console.log('✅ UPDATED contact:', contactId);
+    } else {
+      // Create new contact
+      const createResponse = await axios({
+        method: 'POST',
+        url: 'https://api.hubapi.com/crm/v3/objects/contacts',
+        headers: {
+          'Authorization': `Bearer ${process.env.HUBSPOT_API_KEY}`,
+          'Content-Type': 'application/json'
+        },
+        data: { properties }
+      });
+      
+      console.log('✅ CREATED new contact:', createResponse.data.id);
+    }
+    
+    // Return success for Webflow
+    return res.status(200).json({});
     
   } catch (error) {
     console.error('=== ERROR ===');
-    console.error('Error Type:', error.name);
-    console.error('Error Message:', error.message);
+    console.error('Error:', error.message);
     
     if (error.response) {
-      console.error('HubSpot Error Status:', error.response.status);
-      console.error('HubSpot Error Data:', JSON.stringify(error.response.data, null, 2));
-      
-      // Log specific field errors if present
-      if (error.response.data && error.response.data.message) {
-        console.error('HubSpot Message:', error.response.data.message);
-      }
+      console.error('HubSpot Error:', error.response.data);
     }
     
-    console.error('Full Error:', error);
-    
-    // IMPORTANT: Still return 200 to prevent Webflow from showing error
-    // This ensures users don't see "Form Submission Failed"
-    return res.status(200).end();
+    // Still return 200 to prevent form error
+    return res.status(200).json({});
   }
 };
