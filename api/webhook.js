@@ -1,4 +1,5 @@
 const axios = require('axios');
+const crypto = require('crypto');
 
 module.exports = async (req, res) => {
   // Only accept POST requests
@@ -7,51 +8,13 @@ module.exports = async (req, res) => {
   }
   
   try {
-    // Log the received data
-    console.log('Webhook received:', JSON.stringify(req.body, null, 2));
+    // Get the signature from the headers
+    const signature = req.headers['x-webflow-signature'];
     
-    // Extract form data from Webflow webhook
-    const formData = req.body.data;
+    // Verify the webhook signature
+    const secret = process.env.WEBFLOW_WEBHOOK_SECRET || 'fec3fc4bb106510005307877b17057d4a35d28188ffddceddf7c1cfb57e90ce3';
+    const payload = JSON.stringify(req.body);
+    const hmac = crypto.createHmac('sha256', secret);
+    const digest = hmac.update(payload).digest('hex');
     
-    // Map Webflow fields to HubSpot properties with correct lowercase names
-    const hubspotData = {
-      properties: {
-        email: formData.email || '',
-        firstname: formData.firstName || formData.first_name || formData.firstname || '',
-        lastname: formData.lastName || formData.last_name || formData.lastname || '',
-        phone: formData.phone || formData.phoneNumber || formData.phone_number || '',
-        // Add other fields as needed
-      }
-    };
-    
-    console.log('Data to send to HubSpot:', JSON.stringify(hubspotData, null, 2));
-    
-    // Send to HubSpot
-    const hubspotResponse = await axios({
-      method: 'POST',
-      url: 'https://api.hubapi.com/crm/v3/objects/contacts',
-      headers: {
-        'Authorization': `Bearer ${process.env.HUBSPOT_API_KEY}`,
-        'Content-Type': 'application/json'
-      },
-      data: hubspotData
-    });
-    
-    console.log('HubSpot response:', hubspotResponse.data);
-    
-    // Return success response
-    return res.status(200).json({ 
-      success: true,
-      message: 'Data sent to HubSpot successfully' 
-    });
-  } catch (error) {
-    // Log error details
-    console.error('Error processing webhook:', error.response?.data || error.message);
-    
-    // Return error response
-    return res.status(500).json({ 
-      success: false, 
-      error: error.message 
-    });
-  }
-};
+    // If signatures
